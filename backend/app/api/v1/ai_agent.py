@@ -51,14 +51,22 @@ async def chat_with_assistant(payload: ChatRequest, user_jwt: dict = Depends(stu
     clean_prompt = sanitize_pii_lgpd(payload.prompt)
     tokens_in = count_tokens(clean_prompt)
 
-    # 2. FinOps: Verifica e consome cota diária do aluno no Redis
-    redis = await get_redis()
-    await check_and_consume_token_quota(
-        redis=redis,
-        user_id=user["id"],
-        tokens_needed=tokens_in + 150,  # Estimativa entrada + saída
-        daily_limit=user["daily_token_limit"],
-    )
+    # 2. FinOps: Verifica e consome cota diária do aluno no Redis (com fallback resiliente)
+    current_used = 0
+    try:
+        redis = await get_redis()
+        await check_and_consume_token_quota(
+            redis=redis,
+            user_id=user["id"],
+            tokens_needed=tokens_in + 150,  # Estimativa entrada + saída
+            daily_limit=user["daily_token_limit"],
+        )
+        current_used = int(await redis.get(f"quota:tokens:{user['id']}") or 0)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[FINOPS WARNING] Redis indisponível: {exc}")
+        current_used = tokens_in + 150
 
     # 3. Recuperação de contexto (RAG simples)
     context = next(
@@ -76,7 +84,6 @@ async def chat_with_assistant(payload: ChatRequest, user_jwt: dict = Depends(stu
             detail="Serviço de IA temporariamente em contingência (Circuit Breaker ativo). Tente em 1 minuto."
         )
 
-    current_used = int(await redis.get(f"quota:tokens:{user['id']}") or 0)
     return {
         "reply": answer,
         "finops": {

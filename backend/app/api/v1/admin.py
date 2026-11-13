@@ -58,7 +58,11 @@ async def delete_user(email: str, admin: dict = Depends(admin_only)):
 
 @router.get("/audit-logs")
 async def get_audit_logs(_: dict = Depends(admin_only)):
-    audit = await get_audit_collection()
-    cursor = audit.find({}, {"_id": 0}).sort("timestamp", -1).limit(50)
-    return await cursor.to_list(length=50)
+    try:
+        audit = await get_audit_collection()
+        cursor = audit.find({}, {"_id": 0}).sort("timestamp", -1).limit(50)
+        return await cursor.to_list(length=50)
+    except Exception as exc:
+        print(f"[AUDIT WARNING] Falha ao consultar MongoDB: {exc}")
+        return []
 
