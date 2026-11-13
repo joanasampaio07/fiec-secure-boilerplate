@@ -143,7 +143,7 @@ async def login(payload: LoginRequest, response: Response):
         key="access_token",
         value=token,
         httponly=True,
-        samesite="strict",
+        samesite="none" if cookie_secure else "strict",
         secure=cookie_secure,
         max_age=3600,
     )
