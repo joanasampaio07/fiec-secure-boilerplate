@@ -1,3 +1,4 @@
+import asyncio
 import os
 import secrets
 from datetime import datetime, timezone
@@ -71,9 +72,10 @@ async def send_local_email(to_email: str, subject: str, body: str):
             username=smtp_user or None,
             password=smtp_pass or None,
             start_tls=bool(smtp_user),
+            timeout=8,
         )
-    except Exception:
-        pass  # Evita falha caso o servidor SMTP ainda esteja subindo
+    except Exception as exc:
+        print(f"[SMTP WARNING] Falha ao enviar e-mail: {exc}")
 
 
 async def log_audit(action: str, actor: str, status_msg: str, details: str = ""):
@@ -110,17 +112,19 @@ async def register_student(payload: RegisterRequest):
 
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
-    await send_local_email(
-        payload.email,
-        "Bem-vindo ao Portal Acadêmico FIEC - Seus dados de acesso",
-        (
-            f"Olá {payload.name},\n\n"
-            f"Seu cadastro no Portal Acadêmico FIEC foi criado com sucesso!\n\n"
-            f"Acesse: {frontend_url}\n"
-            f"E-mail: {payload.email}\n"
-            f"Senha provisória: {temp_password}\n\n"
-            f"Por segurança, no seu primeiro acesso o sistema solicitará a troca desta senha."
-        ),
+    asyncio.create_task(
+        send_local_email(
+            payload.email,
+            "Bem-vindo ao Portal Acadêmico FIEC - Seus dados de acesso",
+            (
+                f"Olá {payload.name},\n\n"
+                f"Seu cadastro no Portal Acadêmico FIEC foi criado com sucesso!\n\n"
+                f"Acesse: {frontend_url}\n"
+                f"E-mail: {payload.email}\n"
+                f"Senha provisória: {temp_password}\n\n"
+                f"Por segurança, no seu primeiro acesso o sistema solicitará a troca desta senha."
+            ),
+        )
     )
     await log_audit("USER_REGISTER", payload.email, "SUCCESS", "Senha provisória enviada por e-mail")
     return {
@@ -197,10 +201,12 @@ async def forgot_password(payload: ForgotPasswordRequest):
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
         reset_token = create_access_token(subject=payload.email, role="reset", expires_minutes=15)
         reset_link = f"{frontend_url}/reset-password?token={reset_token}"
-        await send_local_email(
-            payload.email,
-            "Recuperação de Senha - Portal FIEC",
-            f"Use o link abaixo (válido por 15 min) para redefinir sua senha:\n{reset_link}"
+        asyncio.create_task(
+            send_local_email(
+                payload.email,
+                "Recuperação de Senha - Portal FIEC",
+                f"Use o link abaixo (válido por 15 min) para redefinir sua senha:\n{reset_link}"
+            )
         )
         await log_audit("PASSWORD_RESET_REQUESTED", payload.email, "INFO")
     # Resposta genérica evita enumeração de usuários (OWASP)
