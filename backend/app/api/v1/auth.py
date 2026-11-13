@@ -73,14 +73,17 @@ async def send_local_email(to_email: str, subject: str, body: str):
 
 
 async def log_audit(action: str, actor: str, status_msg: str, details: str = ""):
-    audit = await get_audit_collection()
-    await audit.insert_one({
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "action": action,
-        "actor": sanitize_pii_lgpd(actor),
-        "status": status_msg,
-        "details": sanitize_pii_lgpd(details),
-    })
+    try:
+        audit = await get_audit_collection()
+        await audit.insert_one({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "action": action,
+            "actor": sanitize_pii_lgpd(actor),
+            "status": status_msg,
+            "details": sanitize_pii_lgpd(details),
+        })
+    except Exception as exc:
+        print(f"[AUDIT WARNING] Falha ao gravar log no MongoDB: {exc}")
 
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)

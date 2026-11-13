@@ -40,17 +40,20 @@ async def idempotency_middleware(request: Request, call_next):
     if request.method in ("POST", "PATCH"):
         idem_key = request.headers.get("Idempotency-Key")
         if idem_key:
-            redis = await get_redis()
-            cache_key = f"idem:{request.url.path}:{idem_key}"
-            cached = await redis.get(cache_key)
-            if cached:
-                data = json.loads(cached)
-                return Response(
-                    content=data["body"],
-                    status_code=data["status"],
-                    media_type="application/json",
-                    headers={"X-Idempotent-Replay": "true"}
-                )
+            try:
+                redis = await get_redis()
+                cache_key = f"idem:{request.url.path}:{idem_key}"
+                cached = await redis.get(cache_key)
+                if cached:
+                    data = json.loads(cached)
+                    return Response(
+                        content=data["body"],
+                        status_code=data["status"],
+                        media_type="application/json",
+                        headers={"X-Idempotent-Replay": "true"}
+                    )
+            except Exception as exc:
+                print(f"[IDEMPOTENCY WARNING] Redis indisponível: {exc}")
     return await call_next(request)
 
 
