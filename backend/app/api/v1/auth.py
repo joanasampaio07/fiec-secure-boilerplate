@@ -126,9 +126,12 @@ async def register_student(payload: RegisterRequest):
             ),
         )
     )
-    await log_audit("USER_REGISTER", payload.email, "SUCCESS", "Senha provisória enviada por e-mail")
+    await log_audit("USER_REGISTER", payload.email, "SUCCESS", "Senha provisória gerada")
     return {
-        "message": "Cadastro realizado! Enviamos sua senha provisória para o seu e-mail."
+        "message": (
+            f"Cadastro realizado! Enviamos os dados para {payload.email}. "
+            f"(Senha provisória de demonstração: {temp_password})"
+        )
     }
 
 
