@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 from email.message import EmailMessage
 import aiosmtplib
@@ -47,16 +48,28 @@ class ResetPasswordRequest(BaseModel):
 
 
 async def send_local_email(to_email: str, subject: str, body: str):
-    """Envia e-mail para o container Mailpit (acessível em http://localhost:8025)."""
+    """Envia e-mail via SMTP configurável (Mailpit local ou provedor em produção)."""
+    smtp_host = os.getenv("SMTP_HOST", "mailpit")
+    smtp_port = int(os.getenv("SMTP_PORT", "1025"))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASSWORD")
+
     msg = EmailMessage()
-    msg["From"] = "noreply@fiec-portal.local"
+    msg["From"] = os.getenv("SMTP_FROM", "noreply@fiec-portal.local")
     msg["To"] = to_email
     msg["Subject"] = subject
     msg.set_content(body)
     try:
-        await aiosmtplib.send(msg, hostname="mailpit", port=1025)
+        await aiosmtplib.send(
+            msg,
+            hostname=smtp_host,
+            port=smtp_port,
+            username=smtp_user or None,
+            password=smtp_pass or None,
+            start_tls=bool(smtp_user),
+        )
     except Exception:
-        pass  # Evita falha caso Mailpit ainda esteja subindo
+        pass  # Evita falha caso o servidor SMTP ainda esteja subindo
 
 
 async def log_audit(action: str, actor: str, status_msg: str, details: str = ""):
@@ -124,13 +137,14 @@ async def login(payload: LoginRequest, response: Response):
         raise HTTPException(status_code=403, detail="Conta pendente de confirmação por e-mail.")
 
     token = create_access_token(subject=user["email"], role=user["role"], expires_minutes=60)
+    cookie_secure = os.getenv("ENVIRONMENT", "development") == "production"
     # Cookie HttpOnly protege contra roubo de sessão via XSS
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
         samesite="strict",
-        secure=False,  # Mudar para True em HTTPS produção
+        secure=cookie_secure,
         max_age=3600,
     )
     await log_audit("LOGIN_SUCCESS", user["email"], "SUCCESS", f"Role: {user['role']}")

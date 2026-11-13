@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import List
@@ -7,7 +8,7 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
-SECRET_KEY = "CHANGE_ME_VIA_ENV_IN_PROD"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "CHANGE_ME_VIA_ENV_IN_PROD")
 ALGORITHM = "HS256"
 
 
