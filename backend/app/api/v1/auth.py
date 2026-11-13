@@ -1,13 +1,14 @@
 import os
+import secrets
 from datetime import datetime, timezone
 from email.message import EmailMessage
 import aiosmtplib
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from jose import jwt, JWTError
 from app.core.security import (
     hash_password, verify_password, create_access_token,
-    sanitize_pii_lgpd, SECRET_KEY, ALGORITHM
+    sanitize_pii_lgpd, RoleChecker, SECRET_KEY, ALGORITHM
 )
 from app.db.mongo import get_audit_collection
 
@@ -30,7 +31,10 @@ FAKE_USERS_DB = {
 class RegisterRequest(BaseModel):
     name: str = Field(..., min_length=3, max_length=100)
     email: EmailStr
-    password: str = Field(..., min_length=8, max_length=64)
+
+
+class ChangePasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=64)
 
 
 class LoginRequest(BaseModel):
@@ -91,28 +95,37 @@ async def register_student(payload: RegisterRequest):
     if payload.email in FAKE_USERS_DB:
         raise HTTPException(status_code=400, detail="E-mail já cadastrado.")
 
+    temp_password = f"Fiec@{secrets.token_hex(4).upper()}"
     user_id = f"usr_{len(FAKE_USERS_DB) + 1:03d}"
     FAKE_USERS_DB[payload.email] = {
         "id": user_id,
         "name": payload.name,
         "email": payload.email,
-        "password_hash": hash_password(payload.password),
+        "password_hash": hash_password(temp_password),
         "role": "student",
-        "is_verified": False,
+        "is_verified": True,
+        "must_change_password": True,
         "daily_token_limit": 5000,
     }
 
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
-    verify_token = create_access_token(subject=payload.email, role="verify", expires_minutes=30)
-    verify_link = f"{frontend_url}/verify-email?token={verify_token}"
 
     await send_local_email(
         payload.email,
-        "Confirme seu cadastro - Portal Educacional FIEC",
-        f"Olá {payload.name},\n\nClique no link para ativar sua conta:\n{verify_link}"
+        "Bem-vindo ao Portal Acadêmico FIEC - Seus dados de acesso",
+        (
+            f"Olá {payload.name},\n\n"
+            f"Seu cadastro no Portal Acadêmico FIEC foi criado com sucesso!\n\n"
+            f"Acesse: {frontend_url}\n"
+            f"E-mail: {payload.email}\n"
+            f"Senha provisória: {temp_password}\n\n"
+            f"Por segurança, no seu primeiro acesso o sistema solicitará a troca desta senha."
+        ),
     )
-    await log_audit("USER_REGISTER", payload.email, "SUCCESS", "Aguardando verificação de e-mail")
-    return {"message": "Cadastro realizado! Verifique seu e-mail para ativar a conta."}
+    await log_audit("USER_REGISTER", payload.email, "SUCCESS", "Senha provisória enviada por e-mail")
+    return {
+        "message": "Cadastro realizado! Enviamos sua senha provisória para o seu e-mail."
+    }
 
 
 @router.get("/verify-email")
@@ -157,8 +170,24 @@ async def login(payload: LoginRequest, response: Response):
         "name": user["name"],
         "email": user["email"],
         "role": user["role"],
+        "must_change_password": user.get("must_change_password", False),
         "access_token": token,
     }
+
+
+@router.post("/change-password")
+async def change_password_first_access(
+    payload: ChangePasswordRequest,
+    user_jwt: dict = Depends(RoleChecker(["student", "admin"])),
+):
+    email = user_jwt["sub"]
+    user = FAKE_USERS_DB.get(email)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    user["password_hash"] = hash_password(payload.new_password)
+    user["must_change_password"] = False
+    await log_audit("FIRST_LOGIN_PASSWORD_CHANGED", email, "SUCCESS")
+    return {"message": "Senha definitiva cadastrada com sucesso!"}
 
 
 @router.post("/forgot-password")

@@ -8,6 +8,7 @@ type UserSession = {
   name: string;
   email: string;
   role: "student" | "admin";
+  must_change_password?: boolean;
 };
 
 type AdminUser = {
@@ -37,6 +38,7 @@ export default function FiecPortal() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("admin@fiec.org.br");
   const [password, setPassword] = useState("Admin@Fiec2026!");
+  const [newPassword, setNewPassword] = useState("");
 
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
@@ -77,12 +79,32 @@ export default function FiecPortal() {
     try {
       const res = await secureFetch("/auth/register", {
         method: "POST",
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email }),
       });
       setFeedback({ type: "ok", text: res.message });
+      setPassword("");
       setView("login");
     } catch (err: unknown) {
       setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao cadastrar." });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleFirstAccessPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setFeedback(null);
+    setLoading(true);
+    try {
+      const res = await secureFetch("/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({ new_password: newPassword }),
+      });
+      setSession((prev) => (prev ? { ...prev, must_change_password: false } : prev));
+      setNewPassword("");
+      setFeedback({ type: "ok", text: res.message });
+    } catch (err: unknown) {
+      setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao atualizar senha." });
     } finally {
       setLoading(false);
     }
@@ -307,6 +329,9 @@ export default function FiecPortal() {
 
             {view === "register" && (
               <form onSubmit={handleRegister} className="space-y-4">
+                <p className="text-xs text-slate-600 bg-slate-50 p-3 rounded-md border border-slate-200">
+                  Informe seu nome e e-mail. Você receberá uma <strong>senha provisória</strong> para o primeiro acesso.
+                </p>
                 <div>
                   <label htmlFor="reg-name" className="block text-sm font-medium text-slate-700 mb-1">
                     Nome completo
@@ -333,26 +358,12 @@ export default function FiecPortal() {
                     className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
                   />
                 </div>
-                <div>
-                  <label htmlFor="reg-pass" className="block text-sm font-medium text-slate-700 mb-1">
-                    Senha (mínimo 8 caracteres)
-                  </label>
-                  <input
-                    id="reg-pass"
-                    type="password"
-                    required
-                    minLength={8}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
-                  />
-                </div>
                 <button
                   type="submit"
                   disabled={loading}
                   className="w-full py-2.5 bg-[#0F2942] hover:bg-[#163a5c] disabled:opacity-60 text-white rounded-md text-sm font-medium transition-colors"
                 >
-                  {loading ? "Cadastrando..." : "Criar Conta"}
+                  {loading ? "Cadastrando..." : "Criar Conta e Enviar Senha"}
                 </button>
               </form>
             )}
@@ -393,6 +404,36 @@ export default function FiecPortal() {
                 </div>
               </form>
             )}
+          </div>
+        ) : session.must_change_password ? (
+          <div className="max-w-md mx-auto mt-8 bg-white rounded-lg border border-slate-200 shadow-sm p-8 space-y-4">
+            <h2 className="text-lg font-semibold text-slate-900">Primeiro Acesso</h2>
+            <p className="text-sm text-slate-600">
+              Por segurança, defina uma nova senha definitiva para continuar acessando o portal.
+            </p>
+            <form onSubmit={handleFirstAccessPassword} className="space-y-4">
+              <div>
+                <label htmlFor="first-new-pass" className="block text-sm font-medium text-slate-700 mb-1">
+                  Nova senha (mínimo 8 caracteres)
+                </label>
+                <input
+                  id="first-new-pass"
+                  type="password"
+                  required
+                  minLength={8}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-[#0F2942] hover:bg-[#163a5c] disabled:opacity-60 text-white rounded-md text-sm font-medium transition-colors"
+              >
+                {loading ? "Salvando..." : "Salvar Nova Senha e Entrar"}
+              </button>
+            </form>
           </div>
         ) : (
           <div className="space-y-6">
@@ -456,7 +497,37 @@ export default function FiecPortal() {
                     <p className="text-sm text-slate-400 text-center py-12">
                       Envie uma pergunta abaixo para iniciar o atendimento.
                     </p>
-                  ) : (
+                  ) : session.must_change_password ? (
+          <div className="max-w-md mx-auto mt-8 bg-white rounded-lg border border-slate-200 shadow-sm p-8 space-y-4">
+            <h2 className="text-lg font-semibold text-slate-900">Primeiro Acesso</h2>
+            <p className="text-sm text-slate-600">
+              Por segurança, defina uma nova senha definitiva para continuar acessando o portal.
+            </p>
+            <form onSubmit={handleFirstAccessPassword} className="space-y-4">
+              <div>
+                <label htmlFor="first-new-pass" className="block text-sm font-medium text-slate-700 mb-1">
+                  Nova senha (mínimo 8 caracteres)
+                </label>
+                <input
+                  id="first-new-pass"
+                  type="password"
+                  required
+                  minLength={8}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-[#0F2942] hover:bg-[#163a5c] disabled:opacity-60 text-white rounded-md text-sm font-medium transition-colors"
+              >
+                {loading ? "Salvando..." : "Salvar Nova Senha e Entrar"}
+              </button>
+            </form>
+          </div>
+        ) : (
                     messages.map((m, i) => (
                       <div
                         key={i}
@@ -564,7 +635,37 @@ export default function FiecPortal() {
                 <div className="divide-y divide-slate-100 max-h-[420px] overflow-y-auto">
                   {auditLogs.length === 0 ? (
                     <p className="px-6 py-8 text-sm text-slate-500 text-center">Nenhum evento registrado ainda.</p>
-                  ) : (
+                  ) : session.must_change_password ? (
+          <div className="max-w-md mx-auto mt-8 bg-white rounded-lg border border-slate-200 shadow-sm p-8 space-y-4">
+            <h2 className="text-lg font-semibold text-slate-900">Primeiro Acesso</h2>
+            <p className="text-sm text-slate-600">
+              Por segurança, defina uma nova senha definitiva para continuar acessando o portal.
+            </p>
+            <form onSubmit={handleFirstAccessPassword} className="space-y-4">
+              <div>
+                <label htmlFor="first-new-pass" className="block text-sm font-medium text-slate-700 mb-1">
+                  Nova senha (mínimo 8 caracteres)
+                </label>
+                <input
+                  id="first-new-pass"
+                  type="password"
+                  required
+                  minLength={8}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 bg-[#0F2942] hover:bg-[#163a5c] disabled:opacity-60 text-white rounded-md text-sm font-medium transition-colors"
+              >
+                {loading ? "Salvando..." : "Salvar Nova Senha e Entrar"}
+              </button>
+            </form>
+          </div>
+        ) : (
                     auditLogs.map((log, idx) => (
                       <div key={idx} className="px-6 py-3 text-xs flex flex-wrap items-center justify-between gap-2 hover:bg-slate-50">
                         <div className="space-y-0.5">
