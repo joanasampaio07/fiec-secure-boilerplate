@@ -102,8 +102,9 @@ async def register_student(payload: RegisterRequest):
         "daily_token_limit": 5000,
     }
 
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
     verify_token = create_access_token(subject=payload.email, role="verify", expires_minutes=30)
-    verify_link = f"http://localhost:3000/verify-email?token={verify_token}"
+    verify_link = f"{frontend_url}/verify-email?token={verify_token}"
 
     await send_local_email(
         payload.email,
@@ -164,8 +165,9 @@ async def login(payload: LoginRequest, response: Response):
 async def forgot_password(payload: ForgotPasswordRequest):
     user = FAKE_USERS_DB.get(payload.email)
     if user:
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
         reset_token = create_access_token(subject=payload.email, role="reset", expires_minutes=15)
-        reset_link = f"http://localhost:3000/reset-password?token={reset_token}"
+        reset_link = f"{frontend_url}/reset-password?token={reset_token}"
         await send_local_email(
             payload.email,
             "Recuperação de Senha - Portal FIEC",
