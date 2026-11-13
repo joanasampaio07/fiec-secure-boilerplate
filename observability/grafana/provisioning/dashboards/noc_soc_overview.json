@@ -1,0 +1,35 @@
+{
+  "title": "FIEC - Painel Executivo NOC & SOC",
+  "uid": "fiec-noc-soc",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Requisições Totais na API (Tráfego NOC)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "targets": [{ "expr": "sum(http_requests_total)", "refId": "A" }]
+    },
+    {
+      "id": 2,
+      "title": "Tentativas Bloqueadas 401/403/429 (Alertas SOC)",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "targets": [
+        { "expr": "sum(http_requests_total{status=~\"401|403|429\"}) or vector(0)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latência p95 da API (segundos)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 6 },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[1m])) by (le))", "refId": "A" }
+      ]
+    }
+  ]
+}
+

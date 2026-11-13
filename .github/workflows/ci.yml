@@ -1,0 +1,23 @@
+name: DevSecOps CI Pipeline
+
+on: [push, pull_request]
+
+jobs:
+  security-and-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest httpx ruff bandit
+      - name: Lint (Code Quality)
+        run: ruff check backend/
+      - name: SAST Security Scan (Bandit)
+        run: bandit -r backend/app -ll
+      - name: Run Automated Security & Unit Tests
+        run: pytest backend/app/tests
+
