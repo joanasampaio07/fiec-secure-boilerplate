@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { secureFetch } from "@/lib/api";
+import { secureFetch, setAuthToken } from "@/lib/api";
 
 type UserSession = {
   id: string;
@@ -10,46 +10,70 @@ type UserSession = {
   role: "student" | "admin";
 };
 
+type AdminUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  is_verified: boolean;
+  daily_token_limit: number;
+};
+
+type AuditLog = {
+  timestamp: string;
+  action: string;
+  actor: string;
+  status: string;
+  details: string;
+};
+
 export default function FiecPortal() {
   const [view, setView] = useState<"login" | "register" | "forgot" | "dashboard">("login");
+  const [activeTab, setActiveTab] = useState<"assistant" | "users" | "audit">("assistant");
   const [session, setSession] = useState<UserSession | null>(null);
+  const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-  // Estados de formulário
   const [name, setName] = useState("");
   const [email, setEmail] = useState("admin@fiec.org.br");
   const [password, setPassword] = useState("Admin@Fiec2026!");
 
-  // Estados do Agente IA (Aluno)
   const [prompt, setPrompt] = useState("");
-  const [aiReply, setAiReply] = useState("");
+  const [messages, setMessages] = useState<{ role: "user" | "assistant"; text: string }[]>([]);
   const [quota, setQuota] = useState({ used: 0, limit: 5000, remaining: 5000 });
 
-  // Estados do Painel Admin (IAM + SOC)
-  const [usersList, setUsersList] = useState<any[]>([]);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [usersList, setUsersList] = useState<AdminUser[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
     setFeedback(null);
+    setLoading(true);
     try {
       const user = await secureFetch("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
+      if (user.access_token) {
+        setAuthToken(user.access_token);
+      }
       setSession(user);
       setView("dashboard");
+      setActiveTab("assistant");
       if (user.role === "admin") {
-        loadAdminData();
+        await loadAdminData();
       }
-    } catch (err: any) {
-      setFeedback({ type: "err", text: err.message });
+    } catch (err: unknown) {
+      setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao autenticar." });
+    } finally {
+      setLoading(false);
     }
   }
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
     setFeedback(null);
+    setLoading(true);
     try {
       const res = await secureFetch("/auth/register", {
         method: "POST",
@@ -57,44 +81,53 @@ export default function FiecPortal() {
       });
       setFeedback({ type: "ok", text: res.message });
       setView("login");
-    } catch (err: any) {
-      setFeedback({ type: "err", text: err.message });
+    } catch (err: unknown) {
+      setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao cadastrar." });
+    } finally {
+      setLoading(false);
     }
   }
 
   async function handleForgot(e: React.FormEvent) {
     e.preventDefault();
     setFeedback(null);
+    setLoading(true);
     try {
       const res = await secureFetch("/auth/forgot-password", {
         method: "POST",
         body: JSON.stringify({ email }),
       });
       setFeedback({ type: "ok", text: res.message });
-    } catch (err: any) {
-      setFeedback({ type: "err", text: err.message });
+    } catch (err: unknown) {
+      setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao enviar solicitação." });
+    } finally {
+      setLoading(false);
     }
   }
 
   async function handleAskAI(e: React.FormEvent) {
     e.preventDefault();
-    if (!prompt.trim()) return;
+    const trimmed = prompt.trim();
+    if (!trimmed) return;
     setFeedback(null);
+    setLoading(true);
+    setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
+    setPrompt("");
     try {
       const res = await secureFetch("/ai/chat", {
         method: "POST",
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt: trimmed }),
       });
-      // Renderização segura via estado React (escapa HTML automaticamente contra XSS)
-      setAiReply(res.reply);
+      setMessages((prev) => [...prev, { role: "assistant", text: res.reply }]);
       setQuota({
         used: res.finops.tokens_used_today,
         limit: res.finops.daily_limit,
         remaining: res.finops.remaining,
       });
-      setPrompt("");
-    } catch (err: any) {
-      setFeedback({ type: "err", text: err.message });
+    } catch (err: unknown) {
+      setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao consultar assistente." });
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -106,8 +139,8 @@ export default function FiecPortal() {
       ]);
       setUsersList(users);
       setAuditLogs(logs);
-    } catch (err: any) {
-      setFeedback({ type: "err", text: err.message });
+    } catch (err: unknown) {
+      setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao carregar dados administrativos." });
     }
   }
 
@@ -118,9 +151,9 @@ export default function FiecPortal() {
         body: JSON.stringify({ temp_password: "Fiec@NovaSenha2026" }),
       });
       setFeedback({ type: "ok", text: res.message });
-      loadAdminData();
-    } catch (err: any) {
-      setFeedback({ type: "err", text: err.message });
+      await loadAdminData();
+    } catch (err: unknown) {
+      setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao redefinir senha." });
     }
   }
 
@@ -131,270 +164,430 @@ export default function FiecPortal() {
         body: JSON.stringify({ daily_token_limit: newLimit }),
       });
       setFeedback({ type: "ok", text: res.message });
-      loadAdminData();
-    } catch (err: any) {
-      setFeedback({ type: "err", text: err.message });
+      await loadAdminData();
+    } catch (err: unknown) {
+      setFeedback({ type: "err", text: err instanceof Error ? err.message : "Erro ao atualizar cota." });
     }
   }
 
+  function handleLogout() {
+    setAuthToken(null);
+    setSession(null);
+    setMessages([]);
+    setUsersList([]);
+    setAuditLogs([]);
+    setFeedback(null);
+    setView("login");
+  }
+
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-6 font-sans">
-      <header className="max-w-6xl mx-auto flex flex-wrap justify-between items-center border-b border-slate-800 pb-4 mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-cyan-400">Sistema FIEC • Portal Educacional & IA Segura</h1>
-          <p className="text-xs text-slate-400">Arquitetura Zero-Trust • LGPD by Design • ISO 27001 / NIST</p>
-        </div>
-        {session && (
-          <nav aria-label="Menu do usuário" className="flex items-center gap-4">
-            <span className="text-sm bg-slate-800 px-3 py-1 rounded-full">
-              {session.name} ({session.role.toUpperCase()})
-            </span>
-            <button
-              onClick={() => { setSession(null); setView("login"); }}
-              className="text-sm bg-rose-600 hover:bg-rose-500 px-3 py-1 rounded"
-            >
-              Sair
-            </button>
-          </nav>
-        )}
-      </header>
-
-      {feedback && (
-        <div
-          role="alert"
-          className={`max-w-6xl mx-auto mb-6 p-4 rounded border ${
-            feedback.type === "ok"
-              ? "bg-emerald-950/60 border-emerald-500 text-emerald-200"
-              : "bg-rose-950/60 border-rose-500 text-rose-200"
-          }`}
-        >
-          {feedback.text}
-        </div>
-      )}
-
-      {!session ? (
-        <section aria-label="Autenticação" className="max-w-md mx-auto bg-slate-900 p-8 rounded-xl border border-slate-800 shadow-xl">
-          <div className="flex gap-2 mb-6">
-            <button
-              onClick={() => setView("login")}
-              className={`flex-1 py-2 rounded text-sm font-semibold ${view === "login" ? "bg-cyan-600" : "bg-slate-800"}`}
-            >
-              Entrar
-            </button>
-            <button
-              onClick={() => setView("register")}
-              className={`flex-1 py-2 rounded text-sm font-semibold ${view === "register" ? "bg-cyan-600" : "bg-slate-800"}`}
-            >
-              Criar Conta
-            </button>
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+      <header className="bg-white border-b border-slate-200">
+        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded bg-[#0F2942] text-white font-bold text-sm flex items-center justify-center">
+              F
+            </div>
+            <div>
+              <h1 className="text-base font-semibold text-slate-900 leading-tight">
+                Portal Acadêmico FIEC
+              </h1>
+              <p className="text-xs text-slate-500">Sistema Integrado de Atendimento e Gestão</p>
+            </div>
           </div>
 
-          {view === "login" && (
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label htmlFor="login-email" className="block text-sm mb-1">E-mail institucional ou pessoal</label>
-                <input
-                  id="login-email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full p-2.5 rounded bg-slate-800 border border-slate-700"
-                />
+          {session && (
+            <nav aria-label="Menu do usuário" className="flex items-center gap-4">
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-medium text-slate-800">{session.name}</p>
+                <p className="text-xs text-slate-500 uppercase">{session.role}</p>
               </div>
-              <div>
-                <label htmlFor="login-pass" className="block text-sm mb-1">Senha</label>
-                <input
-                  id="login-pass"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full p-2.5 rounded bg-slate-800 border border-slate-700"
-                />
-              </div>
-              <button type="submit" className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 rounded font-semibold">
-                Acessar Plataforma
-              </button>
               <button
-                type="button"
-                onClick={() => setView("forgot")}
-                className="w-full text-xs text-cyan-400 hover:underline mt-2"
+                onClick={handleLogout}
+                className="text-sm font-medium text-slate-700 hover:text-slate-900 border border-slate-300 hover:bg-slate-100 px-3 py-1.5 rounded-md transition-colors"
               >
-                Esqueci minha senha
+                Sair
               </button>
-            </form>
-          )}
-
-          {view === "register" && (
-            <form onSubmit={handleRegister} className="space-y-4">
-              <div>
-                <label htmlFor="reg-name" className="block text-sm mb-1">Nome Completo</label>
-                <input
-                  id="reg-name"
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full p-2.5 rounded bg-slate-800 border border-slate-700"
-                />
-              </div>
-              <div>
-                <label htmlFor="reg-email" className="block text-sm mb-1">E-mail</label>
-                <input
-                  id="reg-email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full p-2.5 rounded bg-slate-800 border border-slate-700"
-                />
-              </div>
-              <div>
-                <label htmlFor="reg-pass" className="block text-sm mb-1">Senha Forte (mín. 8 caracteres)</label>
-                <input
-                  id="reg-pass"
-                  type="password"
-                  required
-                  minLength={8}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full p-2.5 rounded bg-slate-800 border border-slate-700"
-                />
-              </div>
-              <button type="submit" className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 rounded font-semibold">
-                Cadastrar e Enviar Confirmação
-              </button>
-            </form>
-          )}
-
-          {view === "forgot" && (
-            <form onSubmit={handleForgot} className="space-y-4">
-              <p className="text-sm text-slate-300">Informe seu e-mail para receber o link seguro de redefinição (Mailpit porta 8025).</p>
-              <div>
-                <label htmlFor="forgot-email" className="block text-sm mb-1">E-mail cadastrado</label>
-                <input
-                  id="forgot-email"
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full p-2.5 rounded bg-slate-800 border border-slate-700"
-                />
-              </div>
-              <button type="submit" className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 rounded font-semibold">
-                Enviar Link de Recuperação
-              </button>
-              <button type="button" onClick={() => setView("login")} className="w-full text-xs text-slate-400 hover:underline">
-                Voltar para o login
-              </button>
-            </form>
-          )}
-        </section>
-      ) : (
-        <div className="max-w-6xl mx-auto space-y-8">
-          {/* MÓDULO DO ALUNO: AGENTE DE IA COM CONTROLE DE TOKENS */}
-          <section aria-label="Assistente Virtual IA" className="bg-slate-900 p-6 rounded-xl border border-slate-800">
-            <div className="flex flex-wrap justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-cyan-400">Assistente Acadêmico IA (Protegido por LGPD & Circuit Breaker)</h2>
-              <div className="text-xs bg-slate-800 px-3 py-1.5 rounded border border-slate-700">
-                FinOps Tokens Hoje: <strong>{quota.used}</strong> / {quota.limit} (Restantes: {quota.remaining})
-              </div>
-            </div>
-            <form onSubmit={handleAskAI} className="flex gap-3">
-              <label htmlFor="ai-prompt" className="sr-only">Digite sua dúvida para o assistente</label>
-              <input
-                id="ai-prompt"
-                type="text"
-                placeholder="Pergunte sobre matrícula, certificados ou suporte..."
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                className="flex-1 p-3 rounded bg-slate-800 border border-slate-700"
-              />
-              <button type="submit" className="px-6 py-3 bg-cyan-600 hover:bg-cyan-500 rounded font-semibold">
-                Enviar
-              </button>
-            </form>
-            {aiReply && (
-              <div className="mt-4 p-4 rounded bg-slate-800/80 border border-cyan-800 text-sm text-slate-200">
-                {aiReply}
-              </div>
-            )}
-          </section>
-
-          {/* MÓDULO DO ADMIN: IAM + TRILHA DE AUDITORIA SOC + LINKS NOC */}
-          {session.role === "admin" && (
-            <section aria-label="Painel Administrativo SOC/NOC" className="bg-slate-900 p-6 rounded-xl border border-amber-700/50 space-y-6">
-              <div className="flex flex-wrap justify-between items-center">
-                <h2 className="text-lg font-bold text-amber-400">Painel de Governança IAM, FinOps & SOC</h2>
-                <div className="flex gap-3 text-xs">
-                  <a href="http://localhost:3001" target="_blank" rel="noreferrer" className="bg-indigo-600 px-3 py-1.5 rounded hover:bg-indigo-500">
-                    Abrir Grafana (NOC/SOC)
-                  </a>
-                  <a href="http://localhost:8025" target="_blank" rel="noreferrer" className="bg-teal-600 px-3 py-1.5 rounded hover:bg-teal-500">
-                    Abrir Mailpit (E-mails)
-                  </a>
-                  <button onClick={loadAdminData} className="bg-slate-700 px-3 py-1.5 rounded hover:bg-slate-600">
-                    Atualizar Dados
-                  </button>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-700 text-slate-400">
-                      <th className="py-2">Usuário</th>
-                      <th className="py-2">Perfil</th>
-                      <th className="py-2">Verificado</th>
-                      <th className="py-2">Cota Diária Tokens</th>
-                      <th className="py-2">Ações IAM</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {usersList.map((u) => (
-                      <tr key={u.email} className="border-b border-slate-800">
-                        <td className="py-2.5">{u.name} <span className="text-xs text-slate-400">({u.email})</span></td>
-                        <td className="py-2.5 uppercase text-xs">{u.role}</td>
-                        <td className="py-2.5">{u.is_verified ? "✅ Sim" : "⏳ Pendente"}</td>
-                        <td className="py-2.5">{u.daily_token_limit}</td>
-                        <td className="py-2.5 flex gap-2">
-                          <button
-                            onClick={() => handleResetUserPassword(u.email)}
-                            className="text-xs bg-amber-600/80 hover:bg-amber-600 px-2.5 py-1 rounded"
-                          >
-                            Resetar Senha
-                          </button>
-                          <button
-                            onClick={() => handleUpdateQuota(u.email, u.daily_token_limit + 5000)}
-                            className="text-xs bg-cyan-700 hover:bg-cyan-600 px-2.5 py-1 rounded"
-                          >
-                            +5k Tokens
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div>
-                <h3 className="text-sm font-semibold text-slate-300 mb-2">Trilha de Auditoria Imutável (MongoDB • LGPD Mascarada)</h3>
-                <div className="bg-slate-950 p-3 rounded border border-slate-800 max-h-48 overflow-y-auto text-xs font-mono space-y-1">
-                  {auditLogs.length === 0 && <p className="text-slate-500">Nenhum evento registrado ainda.</p>}
-                  {auditLogs.map((log, idx) => (
-                    <div key={idx} className="text-slate-300">
-                      <span className="text-cyan-400">[{log.timestamp}]</span>{" "}
-                      <span className="text-amber-400">{log.action}</span> | {log.actor} | {log.status} — {log.details}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
+            </nav>
           )}
         </div>
-      )}
-    </main>
+      </header>
+
+      <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
+        {feedback && (
+          <div
+            role="alert"
+            className={`mb-6 px-4 py-3 rounded-md border text-sm flex items-center justify-between ${
+              feedback.type === "ok"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                : "bg-red-50 border-red-200 text-red-800"
+            }`}
+          >
+            <span>{feedback.text}</span>
+            <button
+              onClick={() => setFeedback(null)}
+              className="text-xs font-medium underline ml-4"
+            >
+              Fechar
+            </button>
+          </div>
+        )}
+
+        {!session ? (
+          <div className="max-w-md mx-auto mt-8 bg-white rounded-lg border border-slate-200 shadow-sm p-8">
+            <div className="flex border-b border-slate-200 mb-6">
+              <button
+                onClick={() => { setView("login"); setFeedback(null); }}
+                className={`flex-1 pb-3 text-sm font-medium border-b-2 transition-colors ${
+                  view === "login"
+                    ? "border-[#0F2942] text-[#0F2942]"
+                    : "border-transparent text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Entrar
+              </button>
+              <button
+                onClick={() => { setView("register"); setFeedback(null); }}
+                className={`flex-1 pb-3 text-sm font-medium border-b-2 transition-colors ${
+                  view === "register"
+                    ? "border-[#0F2942] text-[#0F2942]"
+                    : "border-transparent text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                Criar Conta
+              </button>
+            </div>
+
+            {view === "login" && (
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div>
+                  <label htmlFor="login-email" className="block text-sm font-medium text-slate-700 mb-1">
+                    E-mail
+                  </label>
+                  <input
+                    id="login-email"
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942] focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="login-pass" className="block text-sm font-medium text-slate-700 mb-1">
+                    Senha
+                  </label>
+                  <input
+                    id="login-pass"
+                    type="password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942] focus:border-transparent"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-2.5 bg-[#0F2942] hover:bg-[#163a5c] disabled:opacity-60 text-white rounded-md text-sm font-medium transition-colors"
+                >
+                  {loading ? "Autenticando..." : "Acessar Plataforma"}
+                </button>
+                <div className="text-center pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setView("forgot")}
+                    className="text-xs text-slate-600 hover:text-[#0F2942] hover:underline"
+                  >
+                    Esqueci minha senha
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {view === "register" && (
+              <form onSubmit={handleRegister} className="space-y-4">
+                <div>
+                  <label htmlFor="reg-name" className="block text-sm font-medium text-slate-700 mb-1">
+                    Nome completo
+                  </label>
+                  <input
+                    id="reg-name"
+                    type="text"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reg-email" className="block text-sm font-medium text-slate-700 mb-1">
+                    E-mail
+                  </label>
+                  <input
+                    id="reg-email"
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="reg-pass" className="block text-sm font-medium text-slate-700 mb-1">
+                    Senha (mínimo 8 caracteres)
+                  </label>
+                  <input
+                    id="reg-pass"
+                    type="password"
+                    required
+                    minLength={8}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-2.5 bg-[#0F2942] hover:bg-[#163a5c] disabled:opacity-60 text-white rounded-md text-sm font-medium transition-colors"
+                >
+                  {loading ? "Cadastrando..." : "Criar Conta"}
+                </button>
+              </form>
+            )}
+
+            {view === "forgot" && (
+              <form onSubmit={handleForgot} className="space-y-4">
+                <p className="text-sm text-slate-600">
+                  Informe seu e-mail cadastrado para receber o link de redefinição de senha.
+                </p>
+                <div>
+                  <label htmlFor="forgot-email" className="block text-sm font-medium text-slate-700 mb-1">
+                    E-mail
+                  </label>
+                  <input
+                    id="forgot-email"
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full px-3 py-2 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-2.5 bg-[#0F2942] hover:bg-[#163a5c] disabled:opacity-60 text-white rounded-md text-sm font-medium transition-colors"
+                >
+                  {loading ? "Enviando..." : "Enviar link de recuperação"}
+                </button>
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => setView("login")}
+                    className="text-xs text-slate-600 hover:underline"
+                  >
+                    Voltar para o login
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {session.role === "admin" && (
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 pb-3">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setActiveTab("assistant")}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      activeTab === "assistant"
+                        ? "bg-[#0F2942] text-white"
+                        : "text-slate-600 hover:bg-slate-200/70"
+                    }`}
+                  >
+                    Assistente Acadêmico
+                  </button>
+                  <button
+                    onClick={() => { setActiveTab("users"); loadAdminData(); }}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      activeTab === "users"
+                        ? "bg-[#0F2942] text-white"
+                        : "text-slate-600 hover:bg-slate-200/70"
+                    }`}
+                  >
+                    Usuários e Cotas
+                  </button>
+                  <button
+                    onClick={() => { setActiveTab("audit"); loadAdminData(); }}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                      activeTab === "audit"
+                        ? "bg-[#0F2942] text-white"
+                        : "text-slate-600 hover:bg-slate-200/70"
+                    }`}
+                  >
+                    Auditoria
+                  </button>
+                </div>
+                <button
+                  onClick={loadAdminData}
+                  className="text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-300 bg-white px-3 py-1.5 rounded-md"
+                >
+                  Atualizar dados
+                </button>
+              </div>
+            )}
+
+            {activeTab === "assistant" && (
+              <section aria-label="Assistente Acadêmico" className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
+                <div className="flex flex-wrap justify-between items-center gap-2 pb-4 mb-4 border-b border-slate-100">
+                  <div>
+                    <h2 className="text-base font-semibold text-slate-900">Assistente Acadêmico</h2>
+                    <p className="text-xs text-slate-500">Atendimento sobre matrículas, certificados e suporte técnico</p>
+                  </div>
+                  <div className="text-xs text-slate-600 bg-slate-100 px-3 py-1.5 rounded-md border border-slate-200">
+                    Cota diária: <strong>{quota.used}</strong> / {quota.limit} tokens
+                  </div>
+                </div>
+
+                <div className="space-y-3 mb-4 min-h-[180px] max-h-[360px] overflow-y-auto p-4 bg-slate-50 rounded-md border border-slate-200">
+                  {messages.length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-12">
+                      Envie uma pergunta abaixo para iniciar o atendimento.
+                    </p>
+                  ) : (
+                    messages.map((m, i) => (
+                      <div
+                        key={i}
+                        className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}
+                      >
+                        <div
+                          className={`max-w-[80%] rounded-lg px-4 py-2.5 text-sm ${
+                            m.role === "user"
+                              ? "bg-[#0F2942] text-white"
+                              : "bg-white border border-slate-200 text-slate-800"
+                          }`}
+                        >
+                          {m.text}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <form onSubmit={handleAskAI} className="flex gap-3">
+                  <label htmlFor="ai-prompt" className="sr-only">Digite sua dúvida</label>
+                  <input
+                    id="ai-prompt"
+                    type="text"
+                    placeholder="Pergunte sobre matrícula, certificados ou suporte..."
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    className="flex-1 px-3 py-2.5 rounded-md border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-[#0F2942]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="px-5 py-2.5 bg-[#0F2942] hover:bg-[#163a5c] disabled:opacity-60 text-white rounded-md text-sm font-medium transition-colors"
+                  >
+                    {loading ? "Enviando..." : "Enviar"}
+                  </button>
+                </form>
+              </section>
+            )}
+
+            {session.role === "admin" && activeTab === "users" && (
+              <section aria-label="Gestão de Usuários" className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200">
+                  <h2 className="text-base font-semibold text-slate-900">Usuários e Cotas de Uso</h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs uppercase">
+                      <tr>
+                        <th className="px-6 py-3 font-medium">Usuário</th>
+                        <th className="px-6 py-3 font-medium">Perfil</th>
+                        <th className="px-6 py-3 font-medium">Status</th>
+                        <th className="px-6 py-3 font-medium">Cota Diária</th>
+                        <th className="px-6 py-3 font-medium text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {usersList.map((u) => (
+                        <tr key={u.email} className="hover:bg-slate-50">
+                          <td className="px-6 py-3.5">
+                            <p className="font-medium text-slate-900">{u.name}</p>
+                            <p className="text-xs text-slate-500">{u.email}</p>
+                          </td>
+                          <td className="px-6 py-3.5 uppercase text-xs font-medium text-slate-600">{u.role}</td>
+                          <td className="px-6 py-3.5">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                                u.is_verified
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  : "bg-amber-50 text-amber-700 border border-amber-200"
+                              }`}
+                            >
+                              {u.is_verified ? "Ativo" : "Pendente"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3.5 text-slate-700">{u.daily_token_limit.toLocaleString("pt-BR")} tokens</td>
+                          <td className="px-6 py-3.5 text-right space-x-2">
+                            <button
+                              onClick={() => handleResetUserPassword(u.email)}
+                              className="text-xs font-medium text-slate-700 hover:text-slate-900 border border-slate-300 px-2.5 py-1 rounded hover:bg-slate-100"
+                            >
+                              Resetar senha
+                            </button>
+                            <button
+                              onClick={() => handleUpdateQuota(u.email, u.daily_token_limit + 5000)}
+                              className="text-xs font-medium text-[#0F2942] border border-[#0F2942]/30 px-2.5 py-1 rounded hover:bg-slate-100"
+                            >
+                              +5.000 tokens
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
+            {session.role === "admin" && activeTab === "audit" && (
+              <section aria-label="Trilha de Auditoria" className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 border-b border-slate-200">
+                  <h2 className="text-base font-semibold text-slate-900">Registro de Auditoria</h2>
+                  <p className="text-xs text-slate-500">Eventos recentes do sistema com mascaramento de dados pessoais</p>
+                </div>
+                <div className="divide-y divide-slate-100 max-h-[420px] overflow-y-auto">
+                  {auditLogs.length === 0 ? (
+                    <p className="px-6 py-8 text-sm text-slate-500 text-center">Nenhum evento registrado ainda.</p>
+                  ) : (
+                    auditLogs.map((log, idx) => (
+                      <div key={idx} className="px-6 py-3 text-xs flex flex-wrap items-center justify-between gap-2 hover:bg-slate-50">
+                        <div className="space-y-0.5">
+                          <span className="font-semibold text-slate-800">{log.action}</span>
+                          <span className="text-slate-400 mx-2">•</span>
+                          <span className="text-slate-600">{log.actor}</span>
+                          {log.details && <p className="text-slate-500">{log.details}</p>}
+                        </div>
+                        <div className="text-right">
+                          <span className="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium mr-2">
+                            {log.status}
+                          </span>
+                          <span className="text-slate-400 font-mono">{log.timestamp}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
-

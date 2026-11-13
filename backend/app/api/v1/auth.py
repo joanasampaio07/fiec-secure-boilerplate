@@ -151,7 +151,13 @@ async def login(payload: LoginRequest, response: Response):
         max_age=3600,
     )
     await log_audit("LOGIN_SUCCESS", user["email"], "SUCCESS", f"Role: {user['role']}")
-    return {"id": user["id"], "name": user["name"], "email": user["email"], "role": user["role"]}
+    return {
+        "id": user["id"],
+        "name": user["name"],
+        "email": user["email"],
+        "role": user["role"],
+        "access_token": token,
+    }
 
 
 @router.post("/forgot-password")
